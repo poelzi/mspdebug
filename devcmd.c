@@ -162,6 +162,51 @@ static int cmd_erase(cproc_t cp, char **arg)
 	return dev->ctl(dev, DEVICE_CTL_ERASE);
 }
 
+static int cmd_trace(cproc_t cp, char **arg)
+{
+	device_t dev = cproc_device(cp);
+	stab_t stab = cproc_stab(cp);
+	uint16_t regs[DEVICE_NUM_REGS];
+	char *addr_text = get_arg(arg);
+	int addr;
+	int started = 0;
+	device_status_t status;
+
+	if (!addr_text) {
+		fprintf(stderr, "trace: address required\n");
+		return -1;
+	}
+
+	if (expr_eval(stab, addr_text, &addr) < 0) {
+		fprintf(stderr, "trace: invalid address\n");
+		return -1;
+	}
+
+	while (1) {
+		if (dev->ctl(dev, DEVICE_CTL_STEP) < 0)
+			break;
+		if (dev->getregs(dev, regs) < 0)
+			break;
+		status = dev->poll(dev);
+		if (status == DEVICE_STATUS_INTR || status == DEVICE_STATUS_ERROR)
+			break;
+		printf("%06x\n", regs[0]);
+		if ((regs[0] >= addr) && !started) {
+			started = 1;
+			printf("Watermark reached\n");
+		} else if ((regs[0] < addr) && started) {
+			printf("Below Watermark \n");
+			break;
+		}
+
+	}
+	if (dev->ctl(dev, DEVICE_CTL_HALT) < 0)
+		return -1;
+
+	return cmd_regs(cp, NULL);
+}
+
+
 static int cmd_step(cproc_t cp, char **arg)
 {
 	device_t dev = cproc_device(cp);
@@ -729,6 +774,16 @@ static const struct cproc_command commands[] = {
 "step [count]\n"
 "    Single-step the CPU, and display the register state.\n"
 	},
+	{
+		.name = "trace",
+		.func = cmd_trace,
+		.help =
+"trace <address>\n"
+"    Steps automaticly through a program.\n"
+"    As soon as <address> is overrun the block condition gets active and \n"
+"    the program stops as soon as PC moves below <address>.\n"
+	},
+
 	{
 		.name = "run",
 		.func = cmd_run,
